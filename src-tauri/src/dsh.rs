@@ -15,6 +15,8 @@ pub const DEFAULT_PORT: u16 = 3080;
 const START_TIMEOUT: Duration = Duration::from_secs(60);
 /// 健康检查间隔
 const POLL_INTERVAL: Duration = Duration::from_millis(300);
+/// 就绪后前端未接管导航时的兜底跳转超时（秒）
+const AUTO_NAV_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -34,6 +36,12 @@ pub struct ManagerInner {
     pub error: Option<String>,
     pub log_path: PathBuf,
     pub fallback_url: Option<Url>,
+    /// 是否正在执行 dsh 包自更新
+    pub updating: bool,
+    /// 工作台导航是否已被前端接管（避免 Rust 兜底与前端重复跳转）
+    pub nav_claimed: bool,
+    /// dsh 就绪起始时刻（超过阈值仍未由前端接管时自动跳转兜底）
+    pub ready_since: Option<Instant>,
 }
 
 /// 全局 dsh 管理状态
@@ -53,6 +61,9 @@ impl DshManager {
                 error: None,
                 log_path: PathBuf::new(),
                 fallback_url: None,
+                updating: false,
+                nav_claimed: false,
+                ready_since: None,
             }),
         }
     }
@@ -84,8 +95,7 @@ fn deverbatim(p: &Path) -> PathBuf {
 }
 
 /// 解析运行时路径：优先 resources 内便携运行时，其次环境变量，最后系统 PATH
-fn resolve_runtime(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {
-    let resource_dir = app
+pub(crate) fn resolve_runtime(app: &AppHandle) -> Result<(PathBuf, PathBuf), String> {    let resource_dir = app
         .path()
         .resource_dir()
         .map_err(|e| format!("无法解析资源目录: {e}"))?;
@@ -184,7 +194,7 @@ fn http_get(port: u16, path: &str) -> Result<String, String> {
 }
 
 /// 判断该端口是否已由 dsh 服务占用（响应体含 dsh 特征）
-fn is_dsh_healthy(port: u16) -> bool {
+pub(crate) fn is_dsh_healthy(port: u16) -> bool {
     match http_get(port, "/") {
         Ok(resp) => {
             let lower = resp.to_lowercase();
@@ -207,7 +217,7 @@ fn pick_free_port() -> Result<u16, String> {
 }
 
 /// 终止子进程树
-fn kill_child(inner: &mut ManagerInner) {
+pub(crate) fn kill_child(inner: &mut ManagerInner) {
     if let Some(pid) = inner.pid.take() {
         #[cfg(windows)]
         {
@@ -269,8 +279,8 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
             inner.state = DshState::Ready;
             inner.stage = "ready".to_string();
             inner.error = None;
+            // 导航由前端接管（等版本检查完成后调用 navigate_workbench）
             drop(inner);
-            navigate_to_dsh(app, port);
             return Ok(());
         }
 
@@ -369,7 +379,7 @@ fn resolve_dsh_home(app: &AppHandle) -> PathBuf {
 }
 
 /// 读取 @deepseek-ai/dsh 包版本（用于部署标记）
-fn dsh_version(install_nm: &Path) -> Result<String, String> {
+pub(crate) fn dsh_version(install_nm: &Path) -> Result<String, String> {
     let p = install_nm
         .join("@deepseek-ai")
         .join("dsh")
@@ -555,6 +565,19 @@ fn navigate_to_dsh(app: &AppHandle, port: u16) {
     navigate_main(app, url);
 }
 
+/// 前端确认版本检查完成后，主动切换到 dsh 工作台
+pub fn navigate_workbench(app: &AppHandle) -> Result<(), String> {
+    let manager = app.state::<DshManager>();
+    let mut inner = manager.inner.lock().unwrap();
+    let port = inner.port;
+    inner.nav_claimed = true;
+    drop(inner);
+    let url =
+        Url::parse(&format!("http://127.0.0.1:{port}")).map_err(|e| format!("无效的工作台地址: {e}"))?;
+    navigate_main(app, url);
+    Ok(())
+}
+
 /// 切回 fallback 启动页
 fn navigate_to_fallback(app: &AppHandle) {
     let manager = app.state::<DshManager>();
@@ -568,7 +591,6 @@ fn navigate_to_fallback(app: &AppHandle) {
 fn spawn_monitor(app: AppHandle, port: u16) {
     std::thread::spawn(move || {
         let start = Instant::now();
-        let mut was_ready = false;
 
         loop {
             let manager = app.state::<DshManager>();
@@ -617,11 +639,31 @@ fn spawn_monitor(app: AppHandle, port: u16) {
                 next = DshState::Failed;
             }
 
-            match next {
-                DshState::Ready if !was_ready => {
-                    was_ready = true;
+            // 就绪后：优先由前端接管导航（保证版本检查完成后才跳转）；
+            // 若前端一直未接管（如页面脚本异常），超时后由 Rust 兜底跳转。
+            if next == DshState::Ready {
+                let do_nav = {
+                    let mut inner = manager.inner.lock().unwrap();
+                    if !inner.nav_claimed {
+                        if inner.ready_since.is_none() {
+                            inner.ready_since = Some(Instant::now());
+                        }
+                        if inner.ready_since.map(|s| s.elapsed() >= AUTO_NAV_TIMEOUT).unwrap_or(false) {
+                            inner.nav_claimed = true;
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if do_nav {
                     navigate_to_dsh(&app, port);
                 }
+            }
+
+            match next {
                 DshState::Failed => {
                     navigate_to_fallback(&app);
                     break;

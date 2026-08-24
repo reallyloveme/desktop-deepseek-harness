@@ -3,5 +3,14 @@
   "identifier": "default",
   "description": "Minimal permissions for the fallback launcher window",
   "windows": ["main"],
-  "permissions": []
+  "permissions": [
+    "core:default",
+    "allow-get-status",
+    "allow-restart-dsh",
+    "allow-read-log",
+    "allow-open-log-dir",
+    "allow-check-update",
+    "allow-update-dsh",
+    "allow-navigate-workbench"
+  ]
 }

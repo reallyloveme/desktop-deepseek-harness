@@ -1,14 +1,38 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { Terminal, RotateCw, FolderOpen, TriangleAlert, CheckCircle2 } from "lucide-vue-next";
-import { getStatus, readLog, restartDsh, openLogDir, type StatusInfo, type DshState } from "../api/tauri";
+import { Terminal, RotateCw, FolderOpen, TriangleAlert, CheckCircle2, Download } from "lucide-vue-next";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import {
+  getStatus,
+  readLog,
+  restartDsh,
+  openLogDir,
+  checkUpdate,
+  updateDsh,
+  navigateWorkbench,
+  onDshUpdate,
+  type StatusInfo,
+  type DshState,
+  type UpdateInfo,
+} from "../api/tauri";
 
 const status = ref<StatusInfo>({ state: "starting" });
 const log = ref<string>("");
 const showLog = ref(false);
 const loadingLog = ref(false);
 const retrying = ref(false);
+const updateInfo = ref<UpdateInfo | null>(null);
+const updating = ref(false);
+const updateMsg = ref("");
+const updateError = ref("");
+const skipped = ref(false);
+/** 版本检查是否已完成（成功或失败都算），完成且就绪后才跳转工作台 */
+const updateResolved = ref(false);
+/** 是否已触发跳转，避免重复调用 */
+const navigating = ref(false);
 let timer: ReturnType<typeof setInterval> | null = null;
+let navTimer: ReturnType<typeof setTimeout> | null = null;
+let unlistenUpdate: UnlistenFn | null = null;
 
 const phases: Record<DshState, string> = {
   starting: "正在启动 dsh 服务 · 正在连接本地运行时",
@@ -39,6 +63,26 @@ async function poll() {
   if (isFailed.value && log.value === "") {
     void loadLog();
   }
+  maybeNavigate();
+}
+
+/** dsh 就绪后切换到工作台；版本检查未完成时最多再等 3.5s */
+function maybeNavigate() {
+  if (navigating.value || !isReady.value) return;
+  if (updateResolved.value) {
+    navigating.value = true;
+    void navigateWorkbench().catch((err) => {
+      console.error("跳转工作台失败：", err);
+      navigating.value = false;
+    });
+    return;
+  }
+  if (!navTimer) {
+    navTimer = setTimeout(() => {
+      updateResolved.value = true;
+      maybeNavigate();
+    }, 3500);
+  }
 }
 
 async function loadLog() {
@@ -67,13 +111,53 @@ async function onRetry() {
   await poll();
 }
 
-onMounted(() => {
+async function checkForUpdate() {
+  try {
+    updateInfo.value = await checkUpdate();
+  } catch (err) {
+    console.error(err);
+  } finally {
+    updateResolved.value = true;
+    maybeNavigate();
+  }
+}
+
+async function onUpdate() {
+  updating.value = true;
+  updateError.value = "";
+  updateMsg.value = "正在准备更新…";
+  try {
+    await updateDsh();
+  } catch (err) {
+    updating.value = false;
+    updateError.value = String(err);
+  }
+}
+
+onMounted(async () => {
   void poll();
   timer = setInterval(() => void poll(), 1200);
+  unlistenUpdate = await onDshUpdate((p) => {
+    if (p.kind === "started") {
+      updating.value = true;
+      updateMsg.value = p.message;
+    } else if (p.kind === "success") {
+      updating.value = false;
+      updateMsg.value = p.message;
+      skipped.value = false;
+      void checkForUpdate();
+    } else if (p.kind === "error") {
+      updating.value = false;
+      updateError.value = p.message;
+    }
+  });
+  void checkForUpdate();
 });
 
 onUnmounted(() => {
   if (timer) clearInterval(timer);
+  if (navTimer) clearTimeout(navTimer);
+  unlistenUpdate?.();
 });
 </script>
 
@@ -140,6 +224,48 @@ onUnmounted(() => {
         </div>
         <p v-if="status.port" class="font-mono text-[12px] text-slate-500">
           http://127.0.0.1:{{ status.port }}
+        </p>
+      </div>
+
+      <!-- 版本与更新 -->
+      <div v-if="updateInfo" class="mt-5 flex flex-col items-center gap-2">
+        <p class="font-mono text-[12px] text-slate-500">
+          dsh {{ updateInfo.current }}
+          <span v-if="!updateInfo.has_update && !updateInfo.error" class="text-slate-600">（已是最新）</span>
+        </p>
+
+        <!-- 发现新版本 -->
+        <div
+          v-if="updateInfo.has_update && !skipped"
+          class="mt-1 w-full animate-fade-up rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-center"
+        >
+          <p class="text-[13px] text-amber-300">
+            发现新版本 <span class="font-mono">{{ updateInfo.latest }}</span>
+          </p>
+          <div class="mt-2.5 flex justify-center gap-2">
+            <button
+              @click="onUpdate"
+              :disabled="updating"
+              class="flex items-center gap-1.5 rounded-lg border border-amber-400/50 bg-amber-400/15 px-3.5 py-1.5 text-[12px] font-medium text-amber-200 transition hover:bg-amber-400/25 disabled:opacity-60"
+            >
+              <Download :size="14" :class="{ 'animate-spin': updating }" />
+              {{ updating ? "更新中…" : "立即更新并重启" }}
+            </button>
+            <button
+              @click="skipped = true"
+              :disabled="updating"
+              class="rounded-lg border border-slate-600/50 px-3.5 py-1.5 text-[12px] text-slate-400 transition hover:bg-slate-700/40 disabled:opacity-60"
+            >
+              稍后
+            </button>
+          </div>
+        </div>
+
+        <!-- 更新过程 / 结果 -->
+        <p v-if="updating" class="text-[12px] text-amber-300">{{ updateMsg }}</p>
+        <p v-if="updateError" class="text-[12px] text-red-400">{{ updateError }}</p>
+        <p v-if="updateInfo.error && !updateInfo.has_update" class="text-[11px] text-slate-600">
+          版本检查失败：{{ updateInfo.error }}
         </p>
       </div>
 
