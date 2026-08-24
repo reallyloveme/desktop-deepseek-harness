@@ -64,6 +64,7 @@ if ($pnpm) {
     $npmCmd = Join-Path $NodeDir "npm.cmd"
     if (-not (Test-Path $npmCmd)) { $npmCmd = "npm.cmd" }
     Write-Host "==> 使用 npm 安装"
+    $env:NODE_OPTIONS = "--max-old-space-size=8192"
     & $npmCmd install --prefix $DshDir --no-fund --no-audit $pkg
     if ($LASTEXITCODE -ne 0) { throw "npm install 失败" }
 }

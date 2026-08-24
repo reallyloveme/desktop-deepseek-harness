@@ -58,7 +58,7 @@ if command -v pnpm >/dev/null 2>&1; then
 else
   NPM_BIN="$NODE_DIR/bin/npm"
   echo "==> 使用 npm 安装"
-  "$NPM_BIN" install --prefix "$DSH_DIR" --no-fund --no-audit "$PKG"
+  NODE_OPTIONS="--max-old-space-size=8192" "$NPM_BIN" install --prefix "$DSH_DIR" --no-fund --no-audit "$PKG"
 fi
 
 echo "==> 完成"
