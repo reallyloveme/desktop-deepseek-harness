@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 226 45% 7%;
+    --foreground: 210 40% 98%;
+    --card: 222 39% 12%;
+    --card-foreground: 210 40% 98%;
+    --primary: 196 100% 55%;
+    --primary-foreground: 226 45% 7%;
+    --muted: 215 16% 34%;
+    --muted-foreground: 215 16% 70%;
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: "Montserrat", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #f9fafb;
+    background: #0b0f1a;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+}
+
+@layer components {
+  .glass {
+    background: rgba(17, 24, 39, 0.72);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    box-shadow:
+      0 24px 60px rgba(0, 0, 0, 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #22d3ee 0%, #3b82f6 60%, #8b5cf6 120%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
+}

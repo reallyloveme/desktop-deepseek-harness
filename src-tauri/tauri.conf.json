@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DeepSeek Harness Desktop",
+  "version": "0.1.0",
+  "identifier": "com.deepseek.harness-desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "DeepSeek Harness Desktop",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "center": true,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "DeepSeek Harness (dsh) desktop launcher",
+    "longDescription": "A cross-platform desktop wrapper around the official DeepSeek Harness agent Web UI. Double-click to launch, close to stop.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../resources/node": "resources/node",
+      "../resources/dsh": "resources/dsh",
+      "dll/WebView2Loader.dll": "WebView2Loader.dll"
+    }
+  }
+}
