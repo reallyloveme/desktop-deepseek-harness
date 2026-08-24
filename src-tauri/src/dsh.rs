@@ -316,7 +316,13 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
         c
     };
     #[cfg(windows)]
-    let mut cmd = Command::new(&node_bin);
+    let mut cmd = {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut c = Command::new(&node_bin);
+        c.creation_flags(CREATE_NO_WINDOW);
+        c
+    };
 
     let child = cmd
         .arg(&cli_entry)
